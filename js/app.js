@@ -20,6 +20,11 @@ function taskApp() {
             notes: ''
         },
 
+        // ---- State PWA ----
+        deferredPrompt: null,
+        showInstall: false,
+        isStandalone: false,
+
         // ---- Lifecycle ----
         init() {
             // Load data dari LocalStorage saat pertama kali buka
@@ -54,6 +59,50 @@ function taskApp() {
                 ];
                 this.saveTasks();
             }
+
+            // Siapkan fitur install PWA
+            this.setupInstall();
+        },
+
+        // ---- PWA: Install ----
+        setupInstall() {
+            // Deteksi apakah app sudah berjalan sebagai aplikasi ter-install
+            this.isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                window.navigator.standalone === true;
+
+            // Ambil prompt yang mungkin sudah tertangkap sebelum Alpine init
+            this.deferredPrompt = window.__deferredPrompt || null;
+            this.showInstall = !this.isStandalone;
+
+            window.addEventListener('pwa:installable', () => {
+                this.deferredPrompt = window.__deferredPrompt;
+                this.showInstall = !this.isStandalone;
+            });
+            window.addEventListener('pwa:installed', () => {
+                this.deferredPrompt = null;
+                this.showInstall = false;
+            });
+        },
+        async installApp() {
+            const promptEvent = this.deferredPrompt || window.__deferredPrompt;
+            if (promptEvent && typeof promptEvent.prompt === 'function') {
+                promptEvent.prompt();
+                const choice = await promptEvent.userChoice;
+                if (choice && choice.outcome === 'accepted') {
+                    this.showInstall = false;
+                }
+                window.__deferredPrompt = null;
+                this.deferredPrompt = null;
+                return;
+            }
+            // Fallback bila prompt native tidak tersedia (mis. iOS Safari / belum HTTPS)
+            alert(
+                'Cara install aplikasi ini:\n\n' +
+                '• Android/Chrome: menu browser (titik tiga) → "Install app" / "Add to Home screen".\n' +
+                '• iPhone/Safari: tombol Share → "Add to Home Screen".\n' +
+                '• Desktop Chrome/Edge: ikon install di address bar.\n\n' +
+                'Catatan: tombol install otomatis aktif bila aplikasi dibuka lewat HTTPS atau localhost (bukan file://).'
+            );
         },
 
         // ---- Modal: Tambah ----
@@ -139,4 +188,32 @@ function taskApp() {
             downloadAnchor.remove();
         }
     };
+}
+
+/* ============================================================
+   PWA: Service Worker + Install Prompt
+   (di luar komponen Alpine agar event global tertangkap lebih awal)
+   ============================================================ */
+window.__deferredPrompt = null;
+
+// Browser siap menawarkan install → simpan event untuk dipicu tombol
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    window.__deferredPrompt = e;
+    window.dispatchEvent(new Event('pwa:installable'));
+});
+
+// App berhasil di-install
+window.addEventListener('appinstalled', () => {
+    window.__deferredPrompt = null;
+    window.dispatchEvent(new Event('pwa:installed'));
+});
+
+// Registrasi service worker (syarat agar PWA installable)
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch((err) => {
+            console.warn('Service worker gagal didaftarkan:', err);
+        });
+    });
 }
